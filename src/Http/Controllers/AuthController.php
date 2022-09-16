@@ -186,8 +186,6 @@ class AuthController extends BaseAuthController
 		$form->setAction(admin_url('auth/setting'));
 
 		$form->ignore(['password_confirmation']);
-		$form->switch('is_open_google_auth')->default(1);
-        $form->text('google_auth')->default(google_create_secret(32));
 
 		$form->saving(function (Form $form) {
 			if ($form->password && $form->model()->password != $form->password) {

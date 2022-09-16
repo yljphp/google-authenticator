@@ -117,19 +117,9 @@ class AuthController extends BaseAuthController
 			}
 		);
 
-		return $content
-			->title(trans('admin.user_setting'))
-			->row(function (Row $row) use ($form) {
-
-				$row->column(9, function (Column $column) use ($form) {
-					$column->append($form->edit(Admin::user()->id));
-				});
-
-				$row->column(3, function (Column $column){
-					$column->append($this->google());
-				});
-
-			});
+		 return $content
+            ->title(trans('admin.user_setting'))
+            ->body($form->edit(Admin::user()->id));
 	}
 
 

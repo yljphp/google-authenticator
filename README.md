@@ -51,6 +51,10 @@ use Yljphp\GoogleAuthenticator\Http\Controllers\AuthController as BaseAuthContro
 设备令牌存在 Redis（key 前缀 `admin:device:`），同时写入 session 与 cookie
 （cookie 由 EncryptCookies 加密、httpOnly，路径限定在后台前缀）。
 
+心跳脚本地址为 `{后台前缀}/device/heartbeat`，**不带 `.js` 后缀**。
+nginx 常配 `location ~ .*\.(js|css)$` 静态规则，带扩展名的请求不会进 PHP，直接 404。
+（1.1.0 的 `device/heartbeat.js` 地址保留为兼容入口，但在上述 nginx 下不可用。）
+
 新装项目若需要自定义阈值，发布配置文件：
 
 ```bash

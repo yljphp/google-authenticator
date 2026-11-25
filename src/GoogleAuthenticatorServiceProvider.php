@@ -52,7 +52,9 @@ class GoogleAuthenticatorServiceProvider extends ServiceProvider
 
         if (config('google-authenticator.single_login.enabled', false)) {
             // 用 headerJs 而不是 Admin::js：Admin::js 在开启资源压缩发布后会被整包替换，自定义脚本会丢失
-            Admin::headerJs(admin_base_path('device/heartbeat.js'));
+            // 路径不带 .js 后缀：nginx 常有 `location ~ .*\.(js|css)$` 静态规则，
+            // 带扩展名的请求不会进 PHP，直接 404
+            Admin::headerJs(admin_base_path('device/heartbeat'));
         }
     }
 
@@ -102,7 +104,10 @@ class GoogleAuthenticatorServiceProvider extends ServiceProvider
             'middleware' => $middleware,
         ], function () {
             Route::get('device/status', DeviceController::class . '@status')->name('admin.device.status');
-            Route::get('device/heartbeat.js', DeviceController::class . '@heartbeat')->name('admin.device.heartbeat');
+            // 心跳脚本走无扩展名路径，避免被 nginx 的静态资源规则（*.js）拦截成 404
+            Route::get('device/heartbeat', DeviceController::class . '@heartbeat')->name('admin.device.heartbeat');
+            // 兼容 1.1.0 的旧地址
+            Route::get('device/heartbeat.js', DeviceController::class . '@heartbeat')->name('admin.device.heartbeat.js');
         });
     }
 }

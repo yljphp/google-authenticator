@@ -13,6 +13,10 @@ use Illuminate\Http\Request;
 use Encore\Admin\Controllers\AuthController as BaseAuthController;
 
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Yljphp\GoogleAuthenticator\Services\DeviceService;
+use Yljphp\GoogleAuthenticator\Services\LoginGuardService;
 
 class AuthController extends BaseAuthController
 {
@@ -20,6 +24,16 @@ class AuthController extends BaseAuthController
 	protected $loginView = 'google-authenticator::login';
 
 	protected $googleView = 'google-authenticator::google';
+
+	/**
+	 * @var LoginGuardService
+	 */
+	protected $loginGuard;
+
+	/**
+	 * @var DeviceService
+	 */
+	protected $devices;
 
 	/**
 	 * {@inheritdoc}
@@ -44,42 +58,124 @@ class AuthController extends BaseAuthController
 	{
 		$this->loginValidator($request->all())->validate();
 
+		$username = (string)$request->get($this->username());
+		$password = (string)$request->input('password', '');
+		$onecode  = (string)$request->input('onecode', '');
+		$ip       = $request->ip();
 
-		$admin = Administrator::query()->where(['username'=>$request->get($this->username())]);
-		$google = $admin->value('google_auth');
+		// 口令取出后立刻从请求里抹掉：
+		// 应用的日志格式化器会记录完整请求体，不抹掉会把明文密码写进日志文件
+		$this->scrubCredentials($request);
 
-		$is_open_google_auth = $admin->value('is_open_google_auth');
+		$guard = $this->loginGuard();
 
-		if ($is_open_google_auth){
+		// 锁定期内直接拒绝，不再进入密码校验
+		if ($guard->isLocked($username, $ip)) {
+			Log::warning('admin_login_blocked', [
+				'uid'     => 0,
+				'account' => $username,
+				'ip'      => $ip,
+				'agent'   => $request->userAgent(),
+			]);
 
-			$onecode = (string) $request->get('onecode');
+			return back()->withInput()->withErrors([
+				$this->username() => $guard->lockedMessage(),
+			]);
+		}
 
+		$admin = Administrator::query()->where('username', $username)->first();
 
-			if (empty($onecode) && strlen($onecode) != 6)
-			{
-				$request->flash();
-				return back()->withErrors(['onecode'=>'Google 验证码错误']);
+		// 用户不存在：走一次等价开销的哈希，抹平与"密码错误"的响应差异
+		if (empty($admin)) {
+			Hash::make($password);
+
+			$guard->recordFailure($username, $ip, $request, 'user_not_found');
+
+			return back()->withInput()->withErrors([
+				$this->username() => $guard->failedMessage(),
+			]);
+		}
+
+		if ($admin->is_open_google_auth) {
+			// 开了验证但没有密钥时，验证码可被推算出来，必须拒绝登录
+			if (empty($admin->google_auth)) {
+				Log::warning('admin_login_google_secret_missing', [
+					'uid'     => (int)$admin->getAuthIdentifier(),
+					'account' => $username,
+					'ip'      => $ip,
+				]);
+
+				$guard->recordFailure($username, $ip, $request, 'google_secret_missing');
+
+				return back()->withInput()->withErrors([
+					$this->username() => $guard->failedMessage(),
+				]);
 			}
 
+			if (!$this->validOneCode($onecode) || !google_check_code((string)$admin->google_auth, $onecode, 1)) {
+				$guard->recordFailure($username, $ip, $request, 'google_code_error');
 
-			if(!google_check_code((string)$google,$onecode,1)) {
-
-				$request->flash();
-				return back()->withErrors(['onecode'=>'Google 验证码错误']);
+				return back()->withInput()->withErrors([
+					$this->username() => $guard->failedMessage(),
+				]);
 			}
 		}
 
-
-		$credentials = $request->only([$this->username(), 'password']);
+		$credentials = [$this->username() => $username, 'password' => $password];
 		$remember = $request->get('remember', false);
 
 		if ($this->guard()->attempt($credentials, $remember)) {
-			return $this->sendLoginResponse($request);
+			$user = $this->guard()->user();
+
+			$guard->recordSuccess($username, $ip, $request, (int)$user->getAuthIdentifier());
+
+			$response = $this->sendLoginResponse($request);
+
+			return $this->devices()->bind($request, $user, $remember, $response);
 		}
 
+		$guard->recordFailure($username, $ip, $request, 'password_error');
+
 		return back()->withInput()->withErrors([
-			$this->username() => $this->getFailedLoginMessage(),
+			$this->username() => $guard->failedMessage(),
 		]);
+	}
+
+	/**
+	 * 验证码必须是 6 位数字
+	 */
+	protected function validOneCode(string $onecode): bool
+	{
+		return (bool)preg_match('/^\d{6}$/', $onecode);
+	}
+
+	/**
+	 * 从请求里抹掉口令与验证码，避免被日志记录
+	 */
+	protected function scrubCredentials(Request $request): void
+	{
+		foreach (['password', 'password_confirmation', 'onecode'] as $field) {
+			$request->request->remove($field);
+			$request->query->remove($field);
+		}
+	}
+
+	protected function loginGuard(): LoginGuardService
+	{
+		if ($this->loginGuard === null) {
+			$this->loginGuard = app(LoginGuardService::class);
+		}
+
+		return $this->loginGuard;
+	}
+
+	protected function devices(): DeviceService
+	{
+		if ($this->devices === null) {
+			$this->devices = app(DeviceService::class);
+		}
+
+		return $this->devices;
 	}
 
 	public function google()

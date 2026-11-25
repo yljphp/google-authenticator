@@ -36,6 +36,12 @@
     <div class="login-box-body">
         <p class="login-box-msg">{{ trans('admin.login') }}</p>
 
+        @if(session('admin_device_notice'))
+            <div class="alert alert-danger" style="padding:8px 12px;margin-bottom:10px;">
+                <i class="fa fa-exclamation-triangle"></i> {{ session('admin_device_notice') }}
+            </div>
+        @endif
+
         <form action="{{ admin_url('auth/login') }}" method="post">
             <div class="form-group has-feedback {!! !$errors->has('username') ?: 'has-error' !!}">
 
